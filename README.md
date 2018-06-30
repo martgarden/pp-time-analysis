@@ -23,13 +23,13 @@ You may have to install the Python bindings: https://github.com/Z3Prover/z3#pyth
 The tool can be used by running
 
 ```
-python3 src/main.py protocols/majority.py -ov
+> python3 src/main.py protocols/majority.py -ov
 ```
 
 If a protocol requires some arguments, then they can be passed in the JSON format. For example,
 
 ```
-python3 src/main.py protocols/modulo.py "[[1, 2], 0, 3]" -ov
+> python3 src/main.py protocols/modulo.py "[[1, 2], 0, 3]" -ov
 ```
 
 for modulo([1, 2], 0, 3).
@@ -37,19 +37,19 @@ for modulo([1, 2], 0, 3).
 The flag -o outputs statistics in the JSON format. The -v flag outputs the progress of the execution. The stage tree can also be generated as a PDF as follows:
 
 ```
-python3 src/main.py protocols/majority.py -t tree.pdf
+> python3 src/main.py protocols/majority.py -t tree.pdf
 ```
 
 If the tree is too large, it is possible to only generate its structure:
 
 ```
-python3 src/main.py protocols/majority.py -s -t tree.pdf
+> python3 src/main.py protocols/majority.py -s -t tree.pdf
 ```
 
 For the list of possible arguments, run:
 
 ```
-python3 src/main.py -h
+> python3 src/main.py -h
 ```
 
 ## Benchmarks
