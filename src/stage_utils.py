@@ -1,5 +1,6 @@
 from graph_tool import Graph
 from graph_tool.topology import label_components
+from graph_tool.topology import shortest_distance
 from formula import Formula
 from speed import Speed
 from stage import Stage
@@ -131,6 +132,8 @@ def transformation_graph(protocol, valuation, disabled, stable=False):
                 add_edge(q, q_, t)
         # Case: AA -> BB, AA -> BC, AB -> CC, AB -> CD
         elif len(common_states) == 0:
+            if stable:
+                continue
             new_edges = {(p, q) for p in t.preset for q in t.postset}
 
             for (p, q) in new_edges:
@@ -139,10 +142,10 @@ def transformation_graph(protocol, valuation, disabled, stable=False):
                 if not stable or valuation[Var(p_)] is True:
                     add_edge(p, q, t)
 
-    return (graph, vertices, edges)
+    return (graph, vertices, edges,V)
 
 def exp(protocol, valuation, disabled):
-    graph, vertices, edges = transformation_graph(protocol, valuation,
+    graph, vertices, edges,V = transformation_graph(protocol, valuation,
                                                   disabled)
     components, _ = label_components(graph)
     expF = set()
@@ -152,62 +155,93 @@ def exp(protocol, valuation, disabled):
             for t in edges[p, q]:
                 expF.add(t.pre)
 
-    return expF
+    return (expF,graph,vertices,edges,V)
 
-def compute_J(protocol, valuation, disabled, F, mem):
+def larger(distance, vertices, r,s,p,q):
+    maxint = 100000
+    if (distance[vertices[r]][vertices[p]] < maxint) and (distance[vertices[s]][vertices[p]] < maxint):
+        return True
+    if (distance[vertices[r]][vertices[q]] < maxint) and (distance[vertices[s]][vertices[q]] < maxint):
+        return True
+    return False
+
+def strictly_larger(distance, vertices,r,s,p,q):
+    return larger(distance, vertices, r,s,p,q) and (not larger(distance, vertices,p,q,r,s))
+
+def nextH(M,dF,distance,vertices):
+    for t in dF:
+        (p,q) = t
+        addit = True
+        for (r,s) in dF:
+            if strictly_larger(distance, vertices, r,s,p,q):
+                addit = False
+                break
+        if addit:
+            M.add(t)
+    return M
+
+def compute_J(protocol, valuation, disabled, F, mem, graph, vertices):
     key = (valuation, frozenset(disabled))
     
     if key in mem:
         return mem[key]
 
-    M = set(F)
-    stable = (len(M) == 0)
+    newM = set()
+    M = set()
+    sF = set(F)
+    distance = shortest_distance(graph,directed=True)
+    while not(len(newM) == len(sF)):
+        newM = nextH(newM,sF.difference(newM),distance,vertices)
+        M = newM
+        stable = (len(M) == 0)
 
-    while not stable:
-        to_remove = set()
-    
-        for pair in M: # AB
-            constraints = []
-            
-            for t in protocol.transitions:
-                if (t.post == pair):
-                    constraints.append(([], [], t.pre))
-                elif len(set(pair) & t.postset) == 1:
-                    p  = tuple(set(pair) & t.postset)[0] # E
-                    q  = pair.other(p)                   # F
-                    q_ = t.post.other(p)                 # G
+        while not stable:
+            to_remove = set()
+        
+            for pair in M: # AB
+                constraints = []
+                
+                for t in protocol.transitions:
+                    if (t.post == pair):
+                        constraints.append(([], [], t.pre))
+                    elif len(set(pair) & t.postset) == 1:
+                        p  = tuple(set(pair) & t.postset)[0] # E
+                        q  = pair.other(p)                   # F
+                        q_ = t.post.other(p)                 # G
 
-                    if (q_ != q): # G != F
-                        if p != q: # E != F
-                            constraints.append(([Var(q)], [Var(p)], t.pre))
-                        elif p not in t.pre: # E = F and E not in AB
-                            constraints.append(([Var(p, True)], [], t.pre))
-                            
-            formula = Formula(valuation, disabled | M)
+                        if (q_ != q): # G != F
+                            if p != q: # E != F
+                                constraints.append(([Var(q)], [Var(p)], t.pre))
+                            elif p not in t.pre: # E = F and E not in AB
+                                constraints.append(([Var(p, True)], [], t.pre))
+                                
+                formula = Formula(valuation, disabled | M)
 
-            if not formula.tautology_check(constraints):
-                to_remove.add(pair)
+                if not formula.tautology_check(constraints):
+                    to_remove.add(pair)
 
-        if len(to_remove) > 0:
-            M -= to_remove
-        else:
-            stable = True
+            if len(to_remove) > 0:
+                M -= to_remove
+            else:
+                stable = True
+        if len(M) > 0:
+            break
 
     mem[key] = M
     
     return M
 
 def eventually_disabled(protocol, valuation, disabled, mem):
-    expF = exp(protocol, valuation, disabled)
+    expF,graph,vertices,edges,V = exp(protocol, valuation, disabled)
     F    = set(expF)
-    J    = compute_J(protocol, valuation, disabled, F, mem)
+    J    = compute_J(protocol, valuation, disabled, F, mem, graph, vertices)
 
     # while len(J) == 0 and len(expF) > 0:
     #     expF = exp(protocol, valuation, disabled | F)
     #     F   |= expF 
     #     J    = compute_J(protocol, valuation, disabled, F, mem)
 
-    return F, J
+    return F, J,graph,vertices,edges,V
 
 def v_disabled(pairs, valuation):
     for pair in pairs:
@@ -244,7 +278,7 @@ def posts_from_pres(protocol, valuation, pres):
     return posts
 
 def compute_I(protocol, valuation, disabled):
-    graph, vertices, _ = transformation_graph(protocol, valuation,
+    graph, vertices, _, _ = transformation_graph(protocol, valuation,
                                               disabled, stable=True)
     components, _, is_bottom = label_components(graph, attractors=True)
 
@@ -266,8 +300,26 @@ def compute_L(protocol, valuation, disabled, I):
 
     return L
 
+def is_small(protocol, valuation, disabled, J,graph,vertices,edges,V):
+    emptycommons = True
+    lV = list(V)
+    for (p,q) in J:
+        if(graph.vertex(vertices[p]).in_degree() > 0):
+            return False, False
+        if(graph.vertex(vertices[q]).in_degree() > 0):
+            return False, False
+        for (r,s) in graph.get_out_edges(vertices[p]):
+            for t in edges[lV[r],lV[s]]:
+                if len(t.preset & t.postset) > 0:
+                    emptycommons = False
+        for (r,s) in graph.get_out_edges(vertices[q]):
+            for t in edges[lV[r],lV[s]]:
+                if len(t.preset & t.postset) > 0:
+                    emptycommons = False
+    return True, emptycommons
+
 def is_fast(protocol, valuation, disabled):
-    graph, vertices, edges = transformation_graph(protocol, valuation,
+    graph, vertices, edges, _ = transformation_graph(protocol, valuation,
                                                   disabled)
     components, _, is_bottom = label_components(graph, attractors=True)
 
@@ -295,7 +347,7 @@ def is_fast(protocol, valuation, disabled):
     return True
 
 def is_very_fast(protocol, valuation, disabled):
-    graph, vertices, edges = transformation_graph(protocol, valuation,
+    graph, vertices, edges,_ = transformation_graph(protocol, valuation,
                                                   disabled)
     components, _, is_bottom = label_components(graph, attractors=True)
 
@@ -327,7 +379,7 @@ def new_stage(protocol, stage, valuation, mem):
         return Stage(Formula(new_valuation), new_valuation, stage.disabled,
                      speed=Speed.ZERO, parent=stage)
 
-    F, J = eventually_disabled(protocol, new_valuation, stage.disabled, mem)
+    F, J, graph, vertices, edges,V = eventually_disabled(protocol, new_valuation, stage.disabled, mem)
 
     # Compute new_formula (Φ) and new_disabled (T)
     if len(F) > 0:
@@ -348,6 +400,11 @@ def new_stage(protocol, stage, valuation, mem):
                 new_speed = Speed.QUADRATIC_LOG
             else:
                 new_speed = Speed.CUBIC
+            small, emptycommons = is_small(protocol, new_valuation, stage.disabled, J, graph, vertices, edges,V)
+            if small and emptycommons:
+                new_speed = Speed.QUADRATIC
+            elif small and (not(new_speed == Speed.QUADRATIC)):
+                new_speed = Speed.QUADRATIC_LOG
         else:
             new_disabled = set(stage.disabled) | set(F)
             new_formula  = Formula(new_valuation, new_disabled)

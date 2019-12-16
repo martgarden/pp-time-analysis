@@ -9,7 +9,7 @@ def pretty_speed(speed):
               Speed.QUADRATIC_LOG: "n²·log(n)",
               Speed.CUBIC: "n³",
               Speed.POLYNOMIAL: "poly(n)",
-              Speed.EXPONENTIAL: "exp(n)"}
+              Speed.EXPONENTIAL: "n⁰⁽ⁿ⁾"}
 
     return labels[speed]
     
